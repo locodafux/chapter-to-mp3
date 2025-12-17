@@ -1,6 +1,6 @@
 let book;
 let allChapters = [];
-let currentChapterTitle = "audiobook_chapter"; // Default filename
+let currentChapterTitle = "audiobook_chapter";
 
 const epubInput = document.getElementById("epubFile");
 const chapterListDiv = document.getElementById("chapterList");
@@ -10,7 +10,6 @@ const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
 const downloadBtn = document.getElementById("download");
 
-// 1. Handle EPUB Upload
 epubInput.addEventListener("change", async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -25,20 +24,38 @@ epubInput.addEventListener("change", async (event) => {
     renderChapters(allChapters);
 });
 
-// 2. Render Chapters with Search support
+// UPDATED: Render Chapters with Quick Play Button
 function renderChapters(chaptersToDisplay) {
     chapterListDiv.innerHTML = "";
     chaptersToDisplay.forEach((chapter) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
-        div.textContent = chapter.label.trim();
-        // Pass both href and label to the loader
+        
+        const label = document.createElement("span");
+        label.className = "chapter-label";
+        label.textContent = chapter.label.trim();
+        
+        const playBtn = document.createElement("button");
+        playBtn.className = "play-btn-mini";
+        playBtn.innerHTML = "▶";
+        playBtn.title = "Generate & Play";
+
+        // Click row: Just load text
         div.onclick = () => loadChapter(chapter.href, chapter.label.trim());
+
+        // Click button: Load text AND generate
+        playBtn.onclick = async (e) => {
+            e.stopPropagation(); // Don't trigger div.onclick
+            await loadChapter(chapter.href, chapter.label.trim());
+            generate();
+        };
+
+        div.appendChild(label);
+        div.appendChild(playBtn);
         chapterListDiv.appendChild(div);
     });
 }
 
-// 3. Search Filter Logic
 searchInput.addEventListener("input", (e) => {
     const searchTerm = e.target.value.toLowerCase();
     const filtered = allChapters.filter(chapter => 
@@ -56,11 +73,10 @@ function flattenTOC(toc) {
     return result;
 }
 
-// 4. Load Chapter Text & Update Filename
 async function loadChapter(href, title) {
     try {
         textArea.value = "Loading text...";
-        currentChapterTitle = title.replace(/[^a-z0-9]/gi, '_'); // Sanitize filename
+        currentChapterTitle = title.replace(/[^a-z0-9]/gi, '_');
         
         const section = book.spine.get(href);
         if (section) {
@@ -80,7 +96,6 @@ async function loadChapter(href, title) {
     }
 }
 
-// 5. Generate Audio
 async function generate() {
     const text = textArea.value.trim();
     if (!text || text === "Loading text...") {
@@ -105,8 +120,6 @@ async function generate() {
         const audioUrl = URL.createObjectURL(blob);
 
         player.src = audioUrl;
-        
-        // Update the download link with the chapter name
         downloadBtn.href = audioUrl;
         downloadBtn.download = `${currentChapterTitle}.mp3`;
         

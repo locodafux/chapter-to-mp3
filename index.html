@@ -29,11 +29,10 @@
       width: 100%;
       max-width: 900px;
       display: grid;
-      grid-template-columns: 300px 1fr; /* Desktop: Sidebar + Content */
+      grid-template-columns: 300px 1fr;
       gap: 20px;
     }
 
-    /* Card styling */
     .card {
       background: #fff;
       padding: 15px;
@@ -42,11 +41,10 @@
       box-sizing: border-box;
     }
 
-    /* Sidebar / Chapter List */
     .sidebar {
       display: flex;
       flex-direction: column;
-      height: 500px;
+      height: 550px;
     }
 
     #chapterSearch {
@@ -65,14 +63,46 @@
       border-radius: 6px;
     }
 
+    /* NEW STYLES FOR CHAPTER ITEM */
     .chapter-item {
-      padding: 10px;
+      padding: 10px 12px;
       border-bottom: 1px solid #eee;
       cursor: pointer;
       font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
     }
 
     .chapter-item:hover { background: #f8f9fa; }
+
+    .chapter-label {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-right: 10px;
+    }
+
+    .play-btn-mini {
+      background: var(--secondary);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.7rem;
+      transition: transform 0.1s;
+    }
+
+    .play-btn-mini:hover { transform: scale(1.1); }
+    .play-btn-mini:active { transform: scale(0.9); }
 
     /* Content Area */
     .content-area {
@@ -83,7 +113,7 @@
 
     textarea {
       width: 100%;
-      min-height: 250px;
+      min-height: 300px;
       padding: 12px;
       border-radius: 8px;
       border: 1px solid #ccc;
@@ -110,8 +140,6 @@
       cursor: pointer;
     }
 
-    button:active { transform: scale(0.98); }
-
     audio { width: 100%; margin-top: 5px; }
 
     #download {
@@ -125,17 +153,9 @@
       font-weight: bold;
     }
 
-    /* MOBILE RESPONSIVE OVERRIDES */
     @media (max-width: 768px) {
-      .main-container {
-        grid-template-columns: 1fr; /* Stack sidebar on top of content */
-      }
-      
-      .sidebar {
-        height: 250px; /* Shorter chapter list on mobile */
-      }
-
-      h2 { font-size: 1.2rem; }
+      .main-container { grid-template-columns: 1fr; }
+      .sidebar { height: 300px; }
     }
   </style>
 </head>
