@@ -1,6 +1,6 @@
 let book;
 let allChapters = [];
-let currentChapterTitle = "audiobook_chapter";
+let currentChapterTitle = localStorage.getItem("lastTitle") || "audiobook_chapter";
 
 const epubInput = document.getElementById("epubFile");
 const chapterListDiv = document.getElementById("chapterList");
@@ -9,6 +9,14 @@ const textArea = document.getElementById("text");
 const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
 const downloadBtn = document.getElementById("download");
+
+// --- 1. RESTORE ON LOAD ---
+window.addEventListener("DOMContentLoaded", () => {
+    const savedText = localStorage.getItem("lastText");
+    if (savedText) {
+        textArea.value = savedText;
+    }
+});
 
 epubInput.addEventListener("change", async (event) => {
     const file = event.target.files[0];
@@ -22,38 +30,47 @@ epubInput.addEventListener("change", async (event) => {
     allChapters = flattenTOC(navigation.toc);
 
     renderChapters(allChapters);
+    
+    // After upload, check if we should highlight a previously active chapter
+    const lastHref = localStorage.getItem("lastHref");
+    if (lastHref) {
+        const items = chapterListDiv.querySelectorAll(".chapter-item");
+        items.forEach(item => {
+            if (item.dataset.href === lastHref) {
+                item.style.backgroundColor = "#f0f0f0";
+                item.scrollIntoView({ block: "center" });
+            }
+        });
+    }
 });
 
-// 1. Updated Search Logic: Scroll instead of Hide
+// --- 2. SEARCH & SCROLL ---
 searchInput.addEventListener("input", (e) => {
     const searchTerm = e.target.value.toLowerCase().trim();
     if (!searchTerm) return;
 
-    // Find the first chapter that matches
     const items = chapterListDiv.querySelectorAll(".chapter-item");
     let found = false;
 
     items.forEach((item) => {
         const text = item.querySelector(".chapter-label").textContent.toLowerCase();
-        
         if (!found && text.includes(searchTerm)) {
-            // Highlight and Scroll
-            item.style.backgroundColor = "#e3f2fd"; // Light blue highlight
+            item.style.backgroundColor = "#e3f2fd";
             item.scrollIntoView({ behavior: "smooth", block: "center" });
-            found = true; // Only scroll to the first match
+            found = true;
         } else {
-            item.style.backgroundColor = ""; // Reset others
+            // Keep the selected chapter color if it's not the search result
+            item.style.backgroundColor = (item.dataset.href === localStorage.getItem("lastHref")) ? "#f0f0f0" : "";
         }
     });
 });
 
-// 2. Render all chapters once
 function renderChapters(chaptersToDisplay) {
     chapterListDiv.innerHTML = "";
-    chaptersToDisplay.forEach((chapter, index) => {
+    chaptersToDisplay.forEach((chapter) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
-        div.dataset.index = index; // Store index for reference
+        div.dataset.href = chapter.href; // Store href for persistence
         
         const label = document.createElement("span");
         label.className = "chapter-label";
@@ -64,14 +81,13 @@ function renderChapters(chaptersToDisplay) {
         playBtn.innerHTML = "▶";
 
         div.onclick = () => {
-            // Reset highlights when a chapter is selected
-            chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
-            div.style.backgroundColor = "#f0f0f0"; 
+            highlightChapter(div, chapter.href);
             loadChapter(chapter.href, chapter.label.trim());
         };
 
         playBtn.onclick = async (e) => {
             e.stopPropagation();
+            highlightChapter(div, chapter.href);
             await loadChapter(chapter.href, chapter.label.trim());
             generate();
         };
@@ -80,6 +96,12 @@ function renderChapters(chaptersToDisplay) {
         div.appendChild(playBtn);
         chapterListDiv.appendChild(div);
     });
+}
+
+function highlightChapter(element, href) {
+    chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
+    element.style.backgroundColor = "#f0f0f0";
+    localStorage.setItem("lastHref", href);
 }
 
 function flattenTOC(toc) {
@@ -91,6 +113,7 @@ function flattenTOC(toc) {
     return result;
 }
 
+// --- 3. LOAD & SAVE TO STORAGE ---
 async function loadChapter(href, title) {
     try {
         textArea.value = "Loading text...";
@@ -103,8 +126,13 @@ async function loadChapter(href, title) {
             const extras = body.querySelectorAll("script, style");
             extras.forEach(e => e.remove());
 
-            const text = body.innerText || body.textContent;
-            textArea.value = text.trim();
+            const text = (body.innerText || body.textContent).trim();
+            textArea.value = text;
+            
+            // SAVE TO LOCAL STORAGE
+            localStorage.setItem("lastText", text);
+            localStorage.setItem("lastTitle", currentChapterTitle);
+            
             section.unload();
         }
     } catch (err) {
