@@ -2,12 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const ffmpeg = require("fluent-ffmpeg");
+const { spawn } = require("child_process");
 const ffmpegPath = require("ffmpeg-static");
-
-// ✅ THE FIX: Tell fluent-ffmpeg to use the ffmpeg binary for both
-ffmpeg.setFfmpegPath(ffmpegPath);
-ffmpeg.setFfprobePath(ffmpegPath); 
 
 const app = express();
 app.use(cors());
@@ -25,6 +21,7 @@ function splitText(text, maxLength = 200) {
 
 app.post("/api/tts", async (req, res) => {
   const tempFiles = [];
+  const listFilePath = path.join("/tmp", `list_${Date.now()}.txt`);
   const outputFile = path.join("/tmp", `output_${Date.now()}.mp3`);
 
   try {
@@ -33,10 +30,10 @@ app.post("/api/tts", async (req, res) => {
 
     const chunks = splitText(text, 200);
 
+    // 1. Download chunks
     for (let i = 0; i < chunks.length; i++) {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
       const response = await fetch(url);
-      
       if (!response.ok) throw new Error("Google TTS failed");
 
       const buffer = Buffer.from(await response.arrayBuffer());
@@ -45,29 +42,39 @@ app.post("/api/tts", async (req, res) => {
       tempFiles.push(chunkPath);
     }
 
-    // Merge logic
+    // 2. Create a "list file" for FFmpeg concat demuxer
+    // Format must be: file '/tmp/chunk_1.mp3'
+    const listContent = tempFiles.map(f => `file '${f}'`).join('\n');
+    fs.writeFileSync(listFilePath, listContent);
+
+    // 3. Run RAW FFmpeg command (Bypasses fluent-ffmpeg metadata checks)
     await new Promise((resolve, reject) => {
-      const command = ffmpeg();
-      tempFiles.forEach(f => command.input(f));
-      command
-        .on("error", (err) => {
-          console.error("FFmpeg Merge Error:", err);
-          reject(err);
-        })
-        .on("end", resolve)
-        // ✅ Using .mergeToFile without extra validation options
-        .mergeToFile(outputFile, "/tmp");
+      const ffmpeg = spawn(ffmpegPath, [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', listFilePath,
+        '-c', 'copy', // 'copy' is fast and doesn't re-encode
+        outputFile
+      ]);
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`FFmpeg exited with code ${code}`));
+      });
+
+      ffmpeg.on('error', reject);
     });
 
+    // 4. Send and Cleanup
     res.download(outputFile, "chapter.mp3", () => {
-      [...tempFiles, outputFile].forEach(f => {
+      [...tempFiles, listFilePath, outputFile].forEach(f => {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       });
     });
 
   } catch (err) {
     console.error("Runtime Error:", err);
-    [...tempFiles, outputFile].forEach(f => {
+    [...tempFiles, listFilePath, outputFile].forEach(f => {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     });
     res.status(500).send(`Server Error: ${err.message}`);
