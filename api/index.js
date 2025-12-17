@@ -5,14 +5,23 @@ const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 
-// Only set FFmpeg. FFprobe is not needed for merging.
+// Set the path to the static binary
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-// ... keep your splitText function here ...
+// --- MUST BE DEFINED BEFORE APP.POST ---
+function splitText(text, maxLength = 200) {
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    chunks.push(text.slice(start, start + maxLength));
+    start += maxLength;
+  }
+  return chunks;
+}
 
 app.post("/api/tts", async (req, res) => {
   const tempFiles = [];
@@ -22,11 +31,13 @@ app.post("/api/tts", async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).send("No text provided");
 
+    // This is where the error was happening
     const chunks = splitText(text, 200);
 
     for (let i = 0; i < chunks.length; i++) {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
       const response = await fetch(url);
+      
       if (!response.ok) throw new Error("Google TTS failed");
 
       const buffer = Buffer.from(await response.arrayBuffer());
@@ -35,13 +46,13 @@ app.post("/api/tts", async (req, res) => {
       tempFiles.push(chunkPath);
     }
 
-    // Merging chunks
+    // Merge logic
     await new Promise((resolve, reject) => {
       const command = ffmpeg();
-      tempFiles.forEach(file => command.input(file));
+      tempFiles.forEach(f => command.input(f));
       command
         .on("error", (err) => {
-          console.error("FFmpeg Error:", err);
+          console.error("FFmpeg Merge Error:", err);
           reject(err);
         })
         .on("end", resolve)
@@ -49,15 +60,19 @@ app.post("/api/tts", async (req, res) => {
     });
 
     res.download(outputFile, "chapter.mp3", () => {
-      // Cleanup /tmp folder
-      [...tempFiles, outputFile].forEach(file => {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
+      // Cleanup files after download completes
+      [...tempFiles, outputFile].forEach(f => {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
       });
     });
 
   } catch (err) {
     console.error("Runtime Error:", err);
-    res.status(500).send("TTS generation failed");
+    // Cleanup on failure to prevent filling up /tmp
+    [...tempFiles, outputFile].forEach(f => {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    });
+    res.status(500).send(`Server Error: ${err.message}`);
   }
 });
 
