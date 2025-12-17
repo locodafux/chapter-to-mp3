@@ -12,21 +12,28 @@ const textContainer = document.getElementById("textDisplay");
 const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
 const statusInfo = document.getElementById("statusInfo");
+const speedSelect = document.getElementById("speedSelect");
 
 // --- INITIALIZE ---
 window.addEventListener("DOMContentLoaded", async () => {
     const savedText = localStorage.getItem("lastText");
     if (savedText) displayText.innerText = savedText;
     
+    const savedSpeed = localStorage.getItem("preferredSpeed");
+    if (savedSpeed) speedSelect.value = savedSpeed;
+
     const savedTime = localStorage.getItem("lastAudioTime");
-    if (savedTime && savedTime > 0) {
-        statusInfo.innerText = `Last saved position: ${Math.floor(savedTime / 60)}m ${Math.floor(savedTime % 60)}s`;
+    if (savedTime > 0) {
+        statusInfo.innerText = `Saved spot: ${Math.floor(savedTime/60)}m ${Math.floor(savedTime%60)}s`;
     }
 
     try {
         const response = await fetch(DEFAULT_BOOK_PATH);
-        if (response.ok) loadEpubData(await response.arrayBuffer());
-    } catch (err) { console.error("Load failed."); }
+        if (response.ok) {
+            const arrayBuffer = await response.arrayBuffer();
+            loadEpubData(arrayBuffer);
+        }
+    } catch (err) { console.error("Auto-load failed."); }
 });
 
 async function loadEpubData(data) {
@@ -35,10 +42,7 @@ async function loadEpubData(data) {
     const navigation = await book.loaded.navigation;
     allChapters = flattenTOC(navigation.toc);
     renderChapters(allChapters);
-    restoreLastPosition();
-}
-
-function restoreLastPosition() {
+    
     const lastHref = localStorage.getItem("lastHref");
     if (lastHref) {
         const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === lastHref);
@@ -49,19 +53,27 @@ function restoreLastPosition() {
     }
 }
 
+// --- SPEED CONTROL ---
+function updateSpeed() {
+    const speed = parseFloat(speedSelect.value);
+    player.playbackRate = speed;
+    localStorage.setItem("preferredSpeed", speed);
+}
+
+player.onplay = () => updateSpeed();
+
 // --- NAVIGATION ---
 async function changeChapter(dir) {
     const lastHref = localStorage.getItem("lastHref");
     const currentIndex = allChapters.findIndex(c => c.href === lastHref);
     const newIndex = currentIndex + dir;
     if (newIndex >= 0 && newIndex < allChapters.length) {
-        // RESET TIME for new chapter
+        const chap = allChapters[newIndex];
+        // Reset time only when changing chapters manually
         localStorage.setItem("lastAudioTime", 0);
         statusInfo.innerText = "";
-        
-        const chap = allChapters[newIndex];
         await loadChapter(chap.href, chap.label);
-        generate();
+        generate(); // Auto-start audio
     }
 }
 
@@ -75,35 +87,30 @@ async function loadChapter(href, title) {
         displayText.innerText = text;
         localStorage.setItem("lastText", text);
         localStorage.setItem("lastHref", href);
-        section.unload();
         
-        // Highlight in list
         chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
         const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === href);
         if (target) target.style.backgroundColor = "#f0f0f0";
+        section.unload();
     }
 }
 
 // --- AUDIO LOGIC ---
 player.ontimeupdate = () => {
     if (!player.duration) return;
-    
-    // 1. Save progress
     localStorage.setItem("lastAudioTime", player.currentTime);
-    
-    // 2. Pre-generate next at 80%
     if (!isGeneratingNext && !nextAudioUrl && (player.currentTime / player.duration) > 0.8) {
         prepareNextChapter();
     }
 };
 
-// This is the "Magic" - it jumps to the saved time once the audio file loads
 player.onloadedmetadata = () => {
     const savedTime = localStorage.getItem("lastAudioTime");
-    if (savedTime && savedTime > 0) {
+    if (savedTime > 0) {
         player.currentTime = parseFloat(savedTime);
-        statusInfo.innerText = "Resumed from last position";
+        statusInfo.innerText = "Resumed from saved position";
     }
+    updateSpeed();
 };
 
 player.onended = () => {
@@ -112,7 +119,7 @@ player.onended = () => {
         displayText.innerText = nextChapterData.text;
         localStorage.setItem("lastText", nextChapterData.text);
         localStorage.setItem("lastHref", nextChapterData.href);
-        localStorage.setItem("lastAudioTime", 0); // Reset for new chapter
+        localStorage.setItem("lastAudioTime", 0);
         player.play();
         nextAudioUrl = null;
         isGeneratingNext = false;
@@ -121,11 +128,11 @@ player.onended = () => {
 
 async function generate() {
     const text = displayText.innerText;
-    if (!text || text.startsWith("Loading")) return;
-    
+    if (!text || text.startsWith("Loading") || text.startsWith("Select")) return;
     genBtn.disabled = true;
     genBtn.textContent = "Generating...";
-    
+    nextAudioUrl = null;
+
     try {
         const res = await fetch("/api/tts", {
             method: "POST",
@@ -142,7 +149,6 @@ async function generate() {
     }
 }
 
-// Background Prep
 async function prepareNextChapter() {
     isGeneratingNext = true;
     const lastHref = localStorage.getItem("lastHref");
@@ -166,7 +172,6 @@ async function prepareNextChapter() {
     }
 }
 
-// Helpers
 function flattenTOC(toc) {
     let res = [];
     toc.forEach(i => {
@@ -182,8 +187,15 @@ function renderChapters(chapters) {
         const div = document.createElement("div");
         div.className = "chapter-item";
         div.dataset.href = chapter.href;
-        div.innerHTML = `<span class="chapter-label">${chapter.label}</span><span>▶</span>`;
-        div.onclick = () => loadChapter(chapter.href, chapter.label);
+        div.innerHTML = `<span>${chapter.label}</span><button class="play-btn-mini">▶</button>`;
+        
+        // This makes the whole row play instantly
+        div.onclick = async () => {
+            localStorage.setItem("lastAudioTime", 0);
+            statusInfo.innerText = "";
+            await loadChapter(chapter.href, chapter.label);
+            generate();
+        };
         chapterListDiv.appendChild(div);
     });
 }
