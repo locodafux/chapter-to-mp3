@@ -6,7 +6,7 @@ async function generate() {
     }
   
     try {
-      const response = await fetch("http://localhost:3001/tts", {
+        const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
