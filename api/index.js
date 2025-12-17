@@ -5,14 +5,14 @@ const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 
-// Set the path to the static binary
+// ✅ THE FIX: Tell fluent-ffmpeg to use the ffmpeg binary for both
 ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfprobePath(ffmpegPath); 
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-// --- MUST BE DEFINED BEFORE APP.POST ---
 function splitText(text, maxLength = 200) {
   const chunks = [];
   let start = 0;
@@ -31,7 +31,6 @@ app.post("/api/tts", async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).send("No text provided");
 
-    // This is where the error was happening
     const chunks = splitText(text, 200);
 
     for (let i = 0; i < chunks.length; i++) {
@@ -56,11 +55,11 @@ app.post("/api/tts", async (req, res) => {
           reject(err);
         })
         .on("end", resolve)
+        // ✅ Using .mergeToFile without extra validation options
         .mergeToFile(outputFile, "/tmp");
     });
 
     res.download(outputFile, "chapter.mp3", () => {
-      // Cleanup files after download completes
       [...tempFiles, outputFile].forEach(f => {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       });
@@ -68,7 +67,6 @@ app.post("/api/tts", async (req, res) => {
 
   } catch (err) {
     console.error("Runtime Error:", err);
-    // Cleanup on failure to prevent filling up /tmp
     [...tempFiles, outputFile].forEach(f => {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     });
