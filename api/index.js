@@ -3,26 +3,16 @@ const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
-const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
-const ffprobeInstaller = require("@ffprobe-installer/ffprobe");
+const ffmpegPath = require("ffmpeg-static");
 
-// Set paths explicitly for the serverless environment
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-ffmpeg.setFfprobePath(ffprobeInstaller.path);
+// Only set FFmpeg. FFprobe is not needed for merging.
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "10mb" })); // Increased limit for larger text
+app.use(express.json({ limit: "10mb" }));
 
-function splitText(text, maxLength = 200) {
-  const chunks = [];
-  let start = 0;
-  while (start < text.length) {
-    chunks.push(text.slice(start, start + maxLength));
-    start += maxLength;
-  }
-  return chunks;
-}
+// ... keep your splitText function here ...
 
 app.post("/api/tts", async (req, res) => {
   const tempFiles = [];
@@ -34,25 +24,21 @@ app.post("/api/tts", async (req, res) => {
 
     const chunks = splitText(text, 200);
 
-    // 1. Generate and save each chunk to /tmp
     for (let i = 0; i < chunks.length; i++) {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
-      
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Google TTS failed for chunk ${i}`);
+      if (!response.ok) throw new Error("Google TTS failed");
 
       const buffer = Buffer.from(await response.arrayBuffer());
       const chunkPath = path.join("/tmp", `chunk_${Date.now()}_${i}.mp3`);
-      
       fs.writeFileSync(chunkPath, buffer);
       tempFiles.push(chunkPath);
     }
 
-    // 2. Merge chunks using FFmpeg
+    // Merging chunks
     await new Promise((resolve, reject) => {
       const command = ffmpeg();
       tempFiles.forEach(file => command.input(file));
-      
       command
         .on("error", (err) => {
           console.error("FFmpeg Error:", err);
@@ -62,9 +48,8 @@ app.post("/api/tts", async (req, res) => {
         .mergeToFile(outputFile, "/tmp");
     });
 
-    // 3. Send file and cleanup
-    res.download(outputFile, "chapter.mp3", (err) => {
-      // Cleanup all temp files after download
+    res.download(outputFile, "chapter.mp3", () => {
+      // Cleanup /tmp folder
       [...tempFiles, outputFile].forEach(file => {
         if (fs.existsSync(file)) fs.unlinkSync(file);
       });
@@ -72,10 +57,6 @@ app.post("/api/tts", async (req, res) => {
 
   } catch (err) {
     console.error("Runtime Error:", err);
-    // Cleanup on failure
-    [...tempFiles, outputFile].forEach(file => {
-      if (fs.existsSync(file)) fs.unlinkSync(file);
-    });
     res.status(500).send("TTS generation failed");
   }
 });
