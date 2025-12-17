@@ -6,12 +6,13 @@ const ffmpeg = require("fluent-ffmpeg");
 const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
 const ffprobeInstaller = require("@ffprobe-installer/ffprobe");
 
+// Set paths explicitly for the serverless environment
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" })); // Increased limit for larger text
 
 function splitText(text, maxLength = 200) {
   const chunks = [];
@@ -23,53 +24,60 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-app.post("/api/tts", async (req, res) => { // Updated route to match vercel.json
+app.post("/api/tts", async (req, res) => {
+  const tempFiles = [];
+  const outputFile = path.join("/tmp", `output_${Date.now()}.mp3`);
+
   try {
-    const text = req.body.text;
+    const { text } = req.body;
     if (!text) return res.status(400).send("No text provided");
 
     const chunks = splitText(text, 200);
-    const mp3Files = [];
 
-    // USE THE /tmp DIRECTORY FOR VERCEL
-    const tempDir = "/tmp";
-
+    // 1. Generate and save each chunk to /tmp
     for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunk)}`;
-
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
+      
       const response = await fetch(url);
-      if (!response.ok) throw new Error("Failed to fetch TTS chunk");
+      if (!response.ok) throw new Error(`Google TTS failed for chunk ${i}`);
 
-      const buffer = await response.arrayBuffer();
-      const filename = path.join(tempDir, `chunk_${Date.now()}_${i}.mp3`);
-      fs.writeFileSync(filename, Buffer.from(buffer));
-      mp3Files.push(filename);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const chunkPath = path.join("/tmp", `chunk_${Date.now()}_${i}.mp3`);
+      
+      fs.writeFileSync(chunkPath, buffer);
+      tempFiles.push(chunkPath);
     }
 
-    const outputFile = path.join(tempDir, `chapter_${Date.now()}.mp3`);
-
+    // 2. Merge chunks using FFmpeg
     await new Promise((resolve, reject) => {
       const command = ffmpeg();
-      mp3Files.forEach(f => command.input(f));
+      tempFiles.forEach(file => command.input(file));
+      
       command
-        .on("error", reject)
+        .on("error", (err) => {
+          console.error("FFmpeg Error:", err);
+          reject(err);
+        })
         .on("end", resolve)
-        .mergeToFile(outputFile, tempDir);
+        .mergeToFile(outputFile, "/tmp");
     });
 
-    // Clean up chunks
-    mp3Files.forEach(f => { if(fs.existsSync(f)) fs.unlinkSync(f); });
-
-    res.download(outputFile, "chapter.mp3", err => {
-      if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
+    // 3. Send file and cleanup
+    res.download(outputFile, "chapter.mp3", (err) => {
+      // Cleanup all temp files after download
+      [...tempFiles, outputFile].forEach(file => {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+      });
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("Runtime Error:", err);
+    // Cleanup on failure
+    [...tempFiles, outputFile].forEach(file => {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    });
     res.status(500).send("TTS generation failed");
   }
 });
 
-// IMPORTANT: DO NOT USE app.listen() for Vercel
 module.exports = app;
