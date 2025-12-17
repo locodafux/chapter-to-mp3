@@ -1,9 +1,10 @@
 let book;
-let allChapters = []; // Store chapters globally for filtering
+let allChapters = [];
+let currentChapterTitle = "audiobook_chapter"; // Default filename
 
 const epubInput = document.getElementById("epubFile");
 const chapterListDiv = document.getElementById("chapterList");
-const searchInput = document.getElementById("chapterSearch"); // The new search bar
+const searchInput = document.getElementById("chapterSearch");
 const textArea = document.getElementById("text");
 const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
@@ -19,19 +20,20 @@ epubInput.addEventListener("change", async (event) => {
 
     await book.ready;
     const navigation = await book.loaded.navigation;
-    allChapters = flattenTOC(navigation.toc); // Save to the global array
+    allChapters = flattenTOC(navigation.toc);
 
-    renderChapters(allChapters); // Initial render
+    renderChapters(allChapters);
 });
 
-// 2. Render Chapters (Used for both initial load and filtering)
+// 2. Render Chapters with Search support
 function renderChapters(chaptersToDisplay) {
     chapterListDiv.innerHTML = "";
-    chaptersToDisplay.forEach((chapter, index) => {
+    chaptersToDisplay.forEach((chapter) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
         div.textContent = chapter.label.trim();
-        div.onclick = () => loadChapter(chapter.href);
+        // Pass both href and label to the loader
+        div.onclick = () => loadChapter(chapter.href, chapter.label.trim());
         chapterListDiv.appendChild(div);
     });
 }
@@ -39,12 +41,9 @@ function renderChapters(chaptersToDisplay) {
 // 3. Search Filter Logic
 searchInput.addEventListener("input", (e) => {
     const searchTerm = e.target.value.toLowerCase();
-    
-    // Filter the original full list of chapters
     const filtered = allChapters.filter(chapter => 
         chapter.label.toLowerCase().includes(searchTerm)
     );
-    
     renderChapters(filtered);
 });
 
@@ -57,10 +56,12 @@ function flattenTOC(toc) {
     return result;
 }
 
-// 4. Load Chapter Text into Textarea
-async function loadChapter(href) {
+// 4. Load Chapter Text & Update Filename
+async function loadChapter(href, title) {
     try {
         textArea.value = "Loading text...";
+        currentChapterTitle = title.replace(/[^a-z0-9]/gi, '_'); // Sanitize filename
+        
         const section = book.spine.get(href);
         if (section) {
             const contents = await section.load(book.load.bind(book));
@@ -79,11 +80,11 @@ async function loadChapter(href) {
     }
 }
 
-// 5. Generate Audio via API
+// 5. Generate Audio
 async function generate() {
     const text = textArea.value.trim();
     if (!text || text === "Loading text...") {
-        alert("Please select a chapter with content first.");
+        alert("Please select a chapter first.");
         return;
     }
 
@@ -104,7 +105,11 @@ async function generate() {
         const audioUrl = URL.createObjectURL(blob);
 
         player.src = audioUrl;
+        
+        // Update the download link with the chapter name
         downloadBtn.href = audioUrl;
+        downloadBtn.download = `${currentChapterTitle}.mp3`;
+        
         downloadBtn.style.display = "inline-block";
         player.play();
 
