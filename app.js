@@ -24,12 +24,36 @@ epubInput.addEventListener("change", async (event) => {
     renderChapters(allChapters);
 });
 
-// UPDATED: Render Chapters with Quick Play Button
+// 1. Updated Search Logic: Scroll instead of Hide
+searchInput.addEventListener("input", (e) => {
+    const searchTerm = e.target.value.toLowerCase().trim();
+    if (!searchTerm) return;
+
+    // Find the first chapter that matches
+    const items = chapterListDiv.querySelectorAll(".chapter-item");
+    let found = false;
+
+    items.forEach((item) => {
+        const text = item.querySelector(".chapter-label").textContent.toLowerCase();
+        
+        if (!found && text.includes(searchTerm)) {
+            // Highlight and Scroll
+            item.style.backgroundColor = "#e3f2fd"; // Light blue highlight
+            item.scrollIntoView({ behavior: "smooth", block: "center" });
+            found = true; // Only scroll to the first match
+        } else {
+            item.style.backgroundColor = ""; // Reset others
+        }
+    });
+});
+
+// 2. Render all chapters once
 function renderChapters(chaptersToDisplay) {
     chapterListDiv.innerHTML = "";
-    chaptersToDisplay.forEach((chapter) => {
+    chaptersToDisplay.forEach((chapter, index) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
+        div.dataset.index = index; // Store index for reference
         
         const label = document.createElement("span");
         label.className = "chapter-label";
@@ -38,14 +62,16 @@ function renderChapters(chaptersToDisplay) {
         const playBtn = document.createElement("button");
         playBtn.className = "play-btn-mini";
         playBtn.innerHTML = "▶";
-        playBtn.title = "Generate & Play";
 
-        // Click row: Just load text
-        div.onclick = () => loadChapter(chapter.href, chapter.label.trim());
+        div.onclick = () => {
+            // Reset highlights when a chapter is selected
+            chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
+            div.style.backgroundColor = "#f0f0f0"; 
+            loadChapter(chapter.href, chapter.label.trim());
+        };
 
-        // Click button: Load text AND generate
         playBtn.onclick = async (e) => {
-            e.stopPropagation(); // Don't trigger div.onclick
+            e.stopPropagation();
             await loadChapter(chapter.href, chapter.label.trim());
             generate();
         };
@@ -55,14 +81,6 @@ function renderChapters(chaptersToDisplay) {
         chapterListDiv.appendChild(div);
     });
 }
-
-searchInput.addEventListener("input", (e) => {
-    const searchTerm = e.target.value.toLowerCase();
-    const filtered = allChapters.filter(chapter => 
-        chapter.label.toLowerCase().includes(searchTerm)
-    );
-    renderChapters(filtered);
-});
 
 function flattenTOC(toc) {
     let result = [];
@@ -82,7 +100,6 @@ async function loadChapter(href, title) {
         if (section) {
             const contents = await section.load(book.load.bind(book));
             const body = contents.querySelector("body");
-            
             const extras = body.querySelectorAll("script, style");
             extras.forEach(e => e.remove());
 
@@ -122,7 +139,6 @@ async function generate() {
         player.src = audioUrl;
         downloadBtn.href = audioUrl;
         downloadBtn.download = `${currentChapterTitle}.mp3`;
-        
         downloadBtn.style.display = "inline-block";
         player.play();
 
