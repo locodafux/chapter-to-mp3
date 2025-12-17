@@ -3,117 +3,168 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Audiobook MVP</title>
+  <title>AI Audiobook Reader</title>
   <style>
-    /* General body styling */
+    :root {
+      --primary: #3498db;
+      --secondary: #2ecc71;
+      --bg: #f0f2f5;
+      --text: #2c3e50;
+    }
+
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #f5f7fa;
-      color: #333;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
       margin: 0;
-      padding: 20px;
+      padding: 10px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
     }
 
-    h2 {
-      text-align: center;
-      color: #2c3e50;
-      margin-bottom: 20px;
-      font-size: 1.5rem;
-    }
+    h2 { font-size: 1.4rem; margin: 15px 0; text-align: center; }
 
-    /* Container for form */
-    .container {
+    .main-container {
       width: 100%;
-      max-width: 600px;
+      max-width: 900px;
+      display: grid;
+      grid-template-columns: 300px 1fr; /* Desktop: Sidebar + Content */
+      gap: 20px;
+    }
+
+    /* Card styling */
+    .card {
       background: #fff;
-      padding: 20px;
+      padding: 15px;
       border-radius: 12px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      box-sizing: border-box;
+    }
+
+    /* Sidebar / Chapter List */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      height: 500px;
+    }
+
+    #chapterSearch {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      box-sizing: border-box;
+    }
+
+    .chapter-list {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      border-radius: 6px;
+    }
+
+    .chapter-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    .chapter-item:hover { background: #f8f9fa; }
+
+    /* Content Area */
+    .content-area {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
     }
 
     textarea {
       width: 100%;
-      min-height: 200px;
+      min-height: 250px;
       padding: 12px;
       border-radius: 8px;
       border: 1px solid #ccc;
-      resize: vertical;
       font-size: 1rem;
+      line-height: 1.5;
+      resize: vertical;
       box-sizing: border-box;
     }
 
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     button {
-      margin-top: 15px;
-      width: 100%;
-      padding: 12px;
+      padding: 14px;
       font-size: 1rem;
+      font-weight: bold;
       border: none;
       border-radius: 8px;
-      background: #3498db;
+      background: var(--primary);
       color: #fff;
       cursor: pointer;
-      transition: background 0.3s ease;
     }
 
-    button:hover {
-      background: #2980b9;
-    }
+    button:active { transform: scale(0.98); }
 
-    audio {
-      display: block;
-      margin-top: 20px;
-      width: 100%;
-      outline: none;
-    }
+    audio { width: 100%; margin-top: 5px; }
 
-    a#download {
-      display: inline-block;
-      margin-top: 15px;
-      padding: 10px 20px;
-      border-radius: 8px;
-      background: #2ecc71;
-      color: #fff;
+    #download {
+      display: none;
+      padding: 12px;
+      background: var(--secondary);
+      color: white;
       text-decoration: none;
-      font-weight: bold;
       text-align: center;
-      transition: background 0.3s ease;
+      border-radius: 8px;
+      font-weight: bold;
     }
 
-    a#download:hover {
-      background: #27ae60;
-    }
-
-    /* Responsive tweaks */
-    @media (max-width: 480px) {
-      body {
-        padding: 15px;
+    /* MOBILE RESPONSIVE OVERRIDES */
+    @media (max-width: 768px) {
+      .main-container {
+        grid-template-columns: 1fr; /* Stack sidebar on top of content */
+      }
+      
+      .sidebar {
+        height: 250px; /* Shorter chapter list on mobile */
       }
 
-      h2 {
-        font-size: 1.3rem;
-      }
-
-      button, a#download {
-        font-size: 0.95rem;
-      }
+      h2 { font-size: 1.2rem; }
     }
   </style>
 </head>
 <body>
 
-  <h2>Paste Chapter → AI Audiobook (MP3)</h2>
+  <h2>EPUB → AI Audiobook</h2>
 
-  <div class="container">
-    <textarea id="text" placeholder="Paste your chapter here..."></textarea>
-    <button onclick="generate()">Generate Audiobook</button>
-    <audio id="player" controls></audio>
-    <a id="download" download="chapter.mp3">Download MP3</a>
+  <div class="main-container">
+    <div class="card sidebar">
+      <input type="file" id="epubFile" accept=".epub" style="width: 100%;">
+      <input type="text" id="chapterSearch" placeholder="Filter chapters...">
+      <div class="chapter-list" id="chapterList">
+        <p style="padding:10px; color:#999; font-size:0.8rem;">Upload a book to begin</p>
+      </div>
+    </div>
+
+    <div class="card content-area">
+      <textarea id="text" placeholder="Chapter text will appear here..."></textarea>
+      
+      <div class="controls">
+        <button id="genBtn" onclick="generate()">Generate Audiobook</button>
+        <audio id="player" controls></audio>
+        <a id="download" download="audiobook_chapter.mp3">Download MP3</a>
+      </div>
+    </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
   <script src="app.js"></script>
 </body>
-</html> 
+</html>
