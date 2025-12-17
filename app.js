@@ -1,6 +1,5 @@
 let book;
 let allChapters = [];
-let currentChapterTitle = localStorage.getItem("lastTitle") || "audiobook_chapter";
 let isGeneratingNext = false;
 let nextAudioUrl = null;
 let nextChapterData = null;
@@ -12,20 +11,22 @@ const displayText = document.getElementById("displayText");
 const textContainer = document.getElementById("textDisplay");
 const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
-const downloadBtn = document.getElementById("download");
+const statusInfo = document.getElementById("statusInfo");
 
 // --- INITIALIZE ---
 window.addEventListener("DOMContentLoaded", async () => {
     const savedText = localStorage.getItem("lastText");
     if (savedText) displayText.innerText = savedText;
+    
+    const savedTime = localStorage.getItem("lastAudioTime");
+    if (savedTime && savedTime > 0) {
+        statusInfo.innerText = `Last saved position: ${Math.floor(savedTime / 60)}m ${Math.floor(savedTime % 60)}s`;
+    }
 
     try {
         const response = await fetch(DEFAULT_BOOK_PATH);
-        if (response.ok) {
-            const arrayBuffer = await response.arrayBuffer();
-            loadEpubData(arrayBuffer);
-        }
-    } catch (err) { console.error("Default book load failed."); }
+        if (response.ok) loadEpubData(await response.arrayBuffer());
+    } catch (err) { console.error("Load failed."); }
 });
 
 async function loadEpubData(data) {
@@ -34,7 +35,10 @@ async function loadEpubData(data) {
     const navigation = await book.loaded.navigation;
     allChapters = flattenTOC(navigation.toc);
     renderChapters(allChapters);
+    restoreLastPosition();
+}
 
+function restoreLastPosition() {
     const lastHref = localStorage.getItem("lastHref");
     if (lastHref) {
         const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === lastHref);
@@ -45,21 +49,18 @@ async function loadEpubData(data) {
     }
 }
 
-// --- CHAPTER NAVIGATION ---
-async function changeChapter(direction) {
+// --- NAVIGATION ---
+async function changeChapter(dir) {
     const lastHref = localStorage.getItem("lastHref");
     const currentIndex = allChapters.findIndex(c => c.href === lastHref);
-    const newIndex = currentIndex + direction;
-
+    const newIndex = currentIndex + dir;
     if (newIndex >= 0 && newIndex < allChapters.length) {
+        // RESET TIME for new chapter
+        localStorage.setItem("lastAudioTime", 0);
+        statusInfo.innerText = "";
+        
         const chap = allChapters[newIndex];
-        const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === chap.href);
-        if (target) {
-            chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
-            target.style.backgroundColor = "#f0f0f0";
-            target.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-        await loadChapter(chap.href, chap.label.trim());
+        await loadChapter(chap.href, chap.label);
         generate();
     }
 }
@@ -67,24 +68,41 @@ async function changeChapter(direction) {
 async function loadChapter(href, title) {
     displayText.innerText = "Loading text...";
     textContainer.scrollTop = 0;
-    currentChapterTitle = title.replace(/[^a-z0-9]/gi, '_');
-    
     const section = book.spine.get(href);
     if (section) {
         const contents = await section.load(book.load.bind(book));
         const text = (contents.querySelector("body").innerText || contents.textContent).trim();
         displayText.innerText = text;
         localStorage.setItem("lastText", text);
-        localStorage.setItem("lastTitle", currentChapterTitle);
         localStorage.setItem("lastHref", href);
         section.unload();
+        
+        // Highlight in list
+        chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
+        const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === href);
+        if (target) target.style.backgroundColor = "#f0f0f0";
     }
 }
 
-// --- AUDIO GENERATION & AUTOPLAY ---
-player.ontimeupdate = async () => {
-    if (player.duration && !isGeneratingNext && !nextAudioUrl) {
-        if ((player.currentTime / player.duration) > 0.8) prepareNextChapter();
+// --- AUDIO LOGIC ---
+player.ontimeupdate = () => {
+    if (!player.duration) return;
+    
+    // 1. Save progress
+    localStorage.setItem("lastAudioTime", player.currentTime);
+    
+    // 2. Pre-generate next at 80%
+    if (!isGeneratingNext && !nextAudioUrl && (player.currentTime / player.duration) > 0.8) {
+        prepareNextChapter();
+    }
+};
+
+// This is the "Magic" - it jumps to the saved time once the audio file loads
+player.onloadedmetadata = () => {
+    const savedTime = localStorage.getItem("lastAudioTime");
+    if (savedTime && savedTime > 0) {
+        player.currentTime = parseFloat(savedTime);
+        statusInfo.innerText = "Resumed from last position";
     }
 };
 
@@ -92,15 +110,39 @@ player.onended = () => {
     if (nextAudioUrl) {
         player.src = nextAudioUrl;
         displayText.innerText = nextChapterData.text;
-        textContainer.scrollTop = 0;
         localStorage.setItem("lastText", nextChapterData.text);
         localStorage.setItem("lastHref", nextChapterData.href);
+        localStorage.setItem("lastAudioTime", 0); // Reset for new chapter
         player.play();
         nextAudioUrl = null;
         isGeneratingNext = false;
     }
 };
 
+async function generate() {
+    const text = displayText.innerText;
+    if (!text || text.startsWith("Loading")) return;
+    
+    genBtn.disabled = true;
+    genBtn.textContent = "Generating...";
+    
+    try {
+        const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text })
+        });
+        const blob = await res.blob();
+        player.src = URL.createObjectURL(blob);
+        player.play();
+    } catch (err) { alert("Generation failed."); }
+    finally {
+        genBtn.disabled = false;
+        genBtn.textContent = "Generate Audio";
+    }
+}
+
+// Background Prep
 async function prepareNextChapter() {
     isGeneratingNext = true;
     const lastHref = localStorage.getItem("lastHref");
@@ -111,8 +153,7 @@ async function prepareNextChapter() {
     const section = book.spine.get(nextChapter.href);
     const contents = await section.load(book.load.bind(book));
     const text = (contents.querySelector("body").innerText || contents.textContent).trim();
-    section.unload();
-
+    
     const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,33 +166,7 @@ async function prepareNextChapter() {
     }
 }
 
-async function generate() {
-    const text = displayText.innerText;
-    if (!text || text.startsWith("Loading")) return;
-    genBtn.disabled = true;
-    genBtn.textContent = "Generating...";
-    nextAudioUrl = null;
-
-    try {
-        const res = await fetch("/api/tts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
-        });
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        player.src = url;
-        player.play();
-        downloadBtn.href = url;
-        downloadBtn.style.display = "block";
-    } catch (err) { alert("Failed."); }
-    finally {
-        genBtn.disabled = false;
-        genBtn.textContent = "Generate Audio";
-    }
-}
-
-// Helper: Flatten EPUB TOC
+// Helpers
 function flattenTOC(toc) {
     let res = [];
     toc.forEach(i => {
@@ -161,19 +176,14 @@ function flattenTOC(toc) {
     return res;
 }
 
-// Sidebar Render
 function renderChapters(chapters) {
     chapterListDiv.innerHTML = "";
     chapters.forEach(chapter => {
         const div = document.createElement("div");
         div.className = "chapter-item";
         div.dataset.href = chapter.href;
-        div.innerHTML = `<span class="chapter-label">${chapter.label}</span><button class="play-btn-mini">▶</button>`;
-        div.onclick = () => {
-            chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
-            div.style.backgroundColor = "#f0f0f0";
-            loadChapter(chapter.href, chapter.label);
-        };
+        div.innerHTML = `<span class="chapter-label">${chapter.label}</span><span>▶</span>`;
+        div.onclick = () => loadChapter(chapter.href, chapter.label);
         chapterListDiv.appendChild(div);
     });
 }
