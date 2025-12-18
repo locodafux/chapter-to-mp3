@@ -7,12 +7,14 @@ let nextChapterData = null;
 const DEFAULT_BOOK_PATH = "/book.epub"; 
 
 const chapterListDiv = document.getElementById("chapterList");
+const chapterSearch = document.getElementById("chapterSearch");
 const displayText = document.getElementById("displayText");
 const textContainer = document.getElementById("textDisplay");
 const genBtn = document.getElementById("genBtn");
 const player = document.getElementById("player");
 const statusInfo = document.getElementById("statusInfo");
 const speedSelect = document.getElementById("speedSelect");
+const epubFileInput = document.getElementById("epubFile");
 
 // --- INITIALIZE ---
 window.addEventListener("DOMContentLoaded", async () => {
@@ -27,6 +29,23 @@ window.addEventListener("DOMContentLoaded", async () => {
         statusInfo.innerText = `Saved spot: ${Math.floor(savedTime/60)}m ${Math.floor(savedTime%60)}s`;
     }
 
+    // Filter Logic
+    chapterSearch.addEventListener("input", filterChapters);
+
+    // Speed Control Logic
+    speedSelect.addEventListener("change", updateSpeed);
+
+    // Manual File Upload
+    epubFileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => loadEpubData(event.target.result);
+            reader.readAsArrayBuffer(file);
+        }
+    });
+
+    // Auto-load default
     try {
         const response = await fetch(DEFAULT_BOOK_PATH);
         if (response.ok) {
@@ -36,6 +55,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     } catch (err) { console.error("Auto-load failed."); }
 });
 
+// --- FILTERING ---
+function filterChapters() {
+    const query = chapterSearch.value.toLowerCase();
+    const items = chapterListDiv.querySelectorAll(".chapter-item");
+    let foundFirst = false;
+
+    items.forEach(item => {
+        const text = item.innerText.toLowerCase();
+        if (text.includes(query)) {
+            item.style.display = "flex";
+            if (!foundFirst && query !== "") {
+                item.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                foundFirst = true;
+            }
+        } else {
+            item.style.display = "none";
+        }
+    });
+}
+
+// --- EPUB LOADING ---
 async function loadEpubData(data) {
     book = ePub(data);
     await book.ready;
@@ -44,16 +84,19 @@ async function loadEpubData(data) {
     renderChapters(allChapters);
     
     const lastHref = localStorage.getItem("lastHref");
-    if (lastHref) {
-        const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === lastHref);
-        if (target) {
-            target.style.backgroundColor = "#f0f0f0";
-            target.scrollIntoView({ block: "center" });
-        }
+    if (lastHref) highlightAndScrollTo(lastHref);
+}
+
+function highlightAndScrollTo(href) {
+    const items = chapterListDiv.querySelectorAll(".chapter-item");
+    items.forEach(i => i.style.backgroundColor = "");
+    const target = Array.from(items).find(el => el.dataset.href === href);
+    if (target) {
+        target.style.backgroundColor = "#e1f5fe";
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
     }
 }
 
-// --- SPEED CONTROL ---
 function updateSpeed() {
     const speed = parseFloat(speedSelect.value);
     player.playbackRate = speed;
@@ -69,11 +112,10 @@ async function changeChapter(dir) {
     const newIndex = currentIndex + dir;
     if (newIndex >= 0 && newIndex < allChapters.length) {
         const chap = allChapters[newIndex];
-        // Reset time only when changing chapters manually
         localStorage.setItem("lastAudioTime", 0);
         statusInfo.innerText = "";
         await loadChapter(chap.href, chap.label);
-        generate(); // Auto-start audio
+        generate(); 
     }
 }
 
@@ -88,9 +130,7 @@ async function loadChapter(href, title) {
         localStorage.setItem("lastText", text);
         localStorage.setItem("lastHref", href);
         
-        chapterListDiv.querySelectorAll(".chapter-item").forEach(i => i.style.backgroundColor = "");
-        const target = Array.from(chapterListDiv.children).find(el => el.dataset.href === href);
-        if (target) target.style.backgroundColor = "#f0f0f0";
+        highlightAndScrollTo(href);
         section.unload();
     }
 }
@@ -108,7 +148,6 @@ player.onloadedmetadata = () => {
     const savedTime = localStorage.getItem("lastAudioTime");
     if (savedTime > 0) {
         player.currentTime = parseFloat(savedTime);
-        statusInfo.innerText = "Resumed from saved position";
     }
     updateSpeed();
 };
@@ -120,6 +159,7 @@ player.onended = () => {
         localStorage.setItem("lastText", nextChapterData.text);
         localStorage.setItem("lastHref", nextChapterData.href);
         localStorage.setItem("lastAudioTime", 0);
+        highlightAndScrollTo(nextChapterData.href);
         player.play();
         nextAudioUrl = null;
         isGeneratingNext = false;
@@ -142,7 +182,7 @@ async function generate() {
         const blob = await res.blob();
         player.src = URL.createObjectURL(blob);
         player.play();
-    } catch (err) { alert("Generation failed."); }
+    } catch (err) { alert("TTS Generation failed."); }
     finally {
         genBtn.disabled = false;
         genBtn.textContent = "Generate Audio";
@@ -189,7 +229,6 @@ function renderChapters(chapters) {
         div.dataset.href = chapter.href;
         div.innerHTML = `<span>${chapter.label}</span><button class="play-btn-mini">▶</button>`;
         
-        // This makes the whole row play instantly
         div.onclick = async () => {
             localStorage.setItem("lastAudioTime", 0);
             statusInfo.innerText = "";
