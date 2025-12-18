@@ -56,23 +56,65 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 // --- FILTERING ---
+// --- SCROLL-TO-MATCH LOGIC ---
 function filterChapters() {
     const query = chapterSearch.value.toLowerCase();
     const items = chapterListDiv.querySelectorAll(".chapter-item");
-    let foundFirst = false;
+    
+    if (!query) return; // Don't scroll if search is empty
 
-    items.forEach(item => {
-        const text = item.innerText.toLowerCase();
-        if (text.includes(query)) {
-            item.style.display = "flex";
-            if (!foundFirst && query !== "") {
-                item.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                foundFirst = true;
-            }
-        } else {
-            item.style.display = "none";
-        }
+    // Find the first chapter that matches the search text
+    const match = Array.from(items).find(item => 
+        item.innerText.toLowerCase().includes(query)
+    );
+
+    if (match) {
+        // This scrolls the matched chapter to the top of the list 
+        // without hiding any other chapters.
+        match.scrollIntoView({ block: "start", behavior: "smooth" });
+        
+        // Optional: briefly highlight it so the user sees which one matched
+        items.forEach(i => i.style.borderLeft = "none");
+        match.style.borderLeft = "4px solid var(--primary)";
+    }
+}
+
+// --- UPDATED RENDER FUNCTION ---
+function renderChapters(chapters) {
+    chapterListDiv.innerHTML = "";
+    chapters.forEach(chapter => {
+        const div = document.createElement("div");
+        div.className = "chapter-item";
+        div.dataset.href = chapter.href;
+        // Ensure items stay visible (flex) even when searching
+        div.style.display = "flex"; 
+        
+        div.innerHTML = `<span>${chapter.label}</span><button class="play-btn-mini">▶</button>`;
+        
+        div.onclick = async () => {
+            localStorage.setItem("lastAudioTime", 0);
+            statusInfo.innerText = "";
+            await loadChapter(chapter.href, chapter.label);
+            generate();
+        };
+        chapterListDiv.appendChild(div);
     });
+}
+
+// --- SYNC SIDEBAR ON CHAPTER CHANGE ---
+function highlightAndScrollTo(href) {
+    const items = chapterListDiv.querySelectorAll(".chapter-item");
+    items.forEach(i => {
+        i.style.backgroundColor = "";
+        i.style.borderLeft = "none";
+    });
+
+    const target = Array.from(items).find(el => el.dataset.href === href);
+    if (target) {
+        target.style.backgroundColor = "#e1f5fe";
+        // When a chapter plays, center it so you see what's before and after
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
 }
 
 // --- EPUB LOADING ---
