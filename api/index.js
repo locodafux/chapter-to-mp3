@@ -10,12 +10,27 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 function splitText(text, maxLength = 200) {
+  const words = text.split(/\s+/); // Split by any whitespace
   const chunks = [];
-  let start = 0;
-  while (start < text.length) {
-    chunks.push(text.slice(start, start + maxLength));
-    start += maxLength;
+  let currentChunk = "";
+
+  for (const word of words) {
+    // Check if adding the next word (plus a space) exceeds the limit
+    if ((currentChunk + word).length > maxLength) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = word + " ";
+    } else {
+      currentChunk += word + " ";
+    }
   }
+
+  // Push the final remaining chunk
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
   return chunks;
 }
 
