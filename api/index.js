@@ -10,23 +10,44 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 function splitText(text, maxLength = 200) {
-  const words = text.split(/\s+/); // Split by any whitespace
+  // Split by sentence endings (. ! ?) while keeping the punctuation
+  // The (?<=[.!?]) is a "lookbehind" - it splits AFTER the punctuation
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+/g) || [text];
   const chunks = [];
   let currentChunk = "";
 
-  for (const word of words) {
-    // Check if adding the next word (plus a space) exceeds the limit
-    if ((currentChunk + word).length > maxLength) {
-      if (currentChunk) {
-        chunks.push(currentChunk.trim());
+  for (let sentence of sentences) {
+    sentence = sentence.trim() + " ";
+
+    // Case 1: The sentence fits in the current chunk
+    if ((currentChunk + sentence).length <= maxLength) {
+      currentChunk += sentence;
+    } 
+    // Case 2: The sentence itself is longer than maxLength (rare, but possible)
+    else if (sentence.length > maxLength) {
+      // First, push whatever we had in currentChunk
+      if (currentChunk) chunks.push(currentChunk.trim());
+      
+      // Split this long sentence by words
+      const words = sentence.split(/\s+/);
+      currentChunk = "";
+      for (const word of words) {
+        if ((currentChunk + word).length > maxLength) {
+          chunks.push(currentChunk.trim());
+          currentChunk = word + " ";
+        } else {
+          currentChunk += word + " ";
+        }
       }
-      currentChunk = word + " ";
-    } else {
-      currentChunk += word + " ";
+    } 
+    // Case 3: The sentence is fine, but it doesn't fit in the current chunk
+    else {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
     }
   }
 
-  // Push the final remaining chunk
+  // Final cleanup
   if (currentChunk.trim()) {
     chunks.push(currentChunk.trim());
   }
