@@ -1,17 +1,14 @@
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs");
-const path = require("path");
-const { spawn } = require("child_process");
-const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
+/**
+ * Splits text into chunks of maxLength without breaking sentences.
+ */
 function splitText(text, maxLength = 200) {
-  // Split by sentence endings (. ! ?) while keeping the punctuation
-  // The (?<=[.!?]) is a "lookbehind" - it splits AFTER the punctuation
   const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+/g) || [text];
   const chunks = [];
   let currentChunk = "";
@@ -19,102 +16,83 @@ function splitText(text, maxLength = 200) {
   for (let sentence of sentences) {
     sentence = sentence.trim() + " ";
 
-    // Case 1: The sentence fits in the current chunk
     if ((currentChunk + sentence).length <= maxLength) {
       currentChunk += sentence;
-    } 
-    // Case 2: The sentence itself is longer than maxLength (rare, but possible)
-    else if (sentence.length > maxLength) {
-      // First, push whatever we had in currentChunk
+    } else {
       if (currentChunk) chunks.push(currentChunk.trim());
       
-      // Split this long sentence by words
-      const words = sentence.split(/\s+/);
-      currentChunk = "";
-      for (const word of words) {
-        if ((currentChunk + word).length > maxLength) {
-          chunks.push(currentChunk.trim());
-          currentChunk = word + " ";
-        } else {
-          currentChunk += word + " ";
+      if (sentence.length > maxLength) {
+        const words = sentence.split(/\s+/);
+        for (const word of words) {
+          if ((currentChunk + word).length > maxLength) {
+            chunks.push(currentChunk.trim());
+            currentChunk = word + " ";
+          } else {
+            currentChunk += word + " ";
+          }
         }
+      } else {
+        currentChunk = sentence;
       }
-    } 
-    // Case 3: The sentence is fine, but it doesn't fit in the current chunk
-    else {
-      chunks.push(currentChunk.trim());
-      currentChunk = sentence;
     }
   }
 
-  // Final cleanup
-  if (currentChunk.trim()) {
-    chunks.push(currentChunk.trim());
-  }
-
+  if (currentChunk.trim()) chunks.push(currentChunk.trim());
   return chunks;
 }
 
+/**
+ * Main TTS Endpoint
+ * High-speed version: Parallel downloads + Buffer concatenation
+ */
 app.post("/api/tts", async (req, res) => {
-  const tempFiles = [];
-  const listFilePath = path.join("/tmp", `list_${Date.now()}.txt`);
-  const outputFile = path.join("/tmp", `output_${Date.now()}.mp3`);
-
   try {
     const { text } = req.body;
-    if (!text) return res.status(400).send("No text provided");
+    if (!text) return res.status(400).json({ error: "No text provided" });
 
     const chunks = splitText(text, 200);
 
-    // 1. Download chunks
-    for (let i = 0; i < chunks.length; i++) {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
+    // 1. Parallel Fetching: Fire all requests at once
+    const chunkPromises = chunks.map(async (chunk) => {
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunk)}`;
       const response = await fetch(url);
-      if (!response.ok) throw new Error("Google TTS failed");
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const chunkPath = path.join("/tmp", `chunk_${Date.now()}_${i}.mp3`);
-      fs.writeFileSync(chunkPath, buffer);
-      tempFiles.push(chunkPath);
-    }
-
-    // 2. Create a "list file" for FFmpeg concat demuxer
-    // Format must be: file '/tmp/chunk_1.mp3'
-    const listContent = tempFiles.map(f => `file '${f}'`).join('\n');
-    fs.writeFileSync(listFilePath, listContent);
-
-    // 3. Run RAW FFmpeg command (Bypasses fluent-ffmpeg metadata checks)
-    await new Promise((resolve, reject) => {
-      const ffmpeg = spawn(ffmpegPath, [
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', listFilePath,
-        '-c', 'copy', // 'copy' is fast and doesn't re-encode
-        outputFile
-      ]);
-
-      ffmpeg.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`FFmpeg exited with code ${code}`));
-      });
-
-      ffmpeg.on('error', reject);
+      
+      if (!response.ok) {
+        throw new Error(`Google TTS failed for chunk: ${chunk.substring(0, 20)}...`);
+      }
+      
+      // Return the raw buffer of the MP3 chunk
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
     });
 
-    // 4. Send and Cleanup
-    res.download(outputFile, "chapter.mp3", () => {
-      [...tempFiles, listFilePath, outputFile].forEach(f => {
-        if (fs.existsSync(f)) fs.unlinkSync(f);
-      });
+    // Wait for all chunks to download simultaneously
+    const buffers = await Promise.all(chunkPromises);
+
+    // 2. Direct Concatenation
+    // MP3s are stream-able; you can join them without FFmpeg re-encoding.
+    const finalBuffer = Buffer.concat(buffers);
+
+    // 3. Optimized Response Headers
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Disposition": 'attachment; filename="tts_audio.mp3"',
+      "Content-Length": finalBuffer.length,
+      "Cache-Control": "no-cache"
     });
+
+    // Send the final audio directly to the client
+    res.send(finalBuffer);
 
   } catch (err) {
-    console.error("Runtime Error:", err);
-    [...tempFiles, listFilePath, outputFile].forEach(f => {
-      if (fs.existsSync(f)) fs.unlinkSync(f);
-    });
-    res.status(500).send(`Server Error: ${err.message}`);
+    console.error("TTS Error:", err);
+    res.status(500).json({ error: "Processing failed", details: err.message });
   }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`TTS Server running on port ${PORT}`);
 });
 
 module.exports = app;
