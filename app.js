@@ -164,6 +164,11 @@ async function changeChapter(dir) {
 async function loadChapter(href, title) {
     displayText.innerText = "Loading text...";
     textContainer.scrollTop = 0;
+    
+    // RESET saved time so it doesn't apply to the new chapter
+    localStorage.setItem("lastAudioTime", 0); 
+    statusInfo.innerText = ""; 
+
     const section = book.spine.get(href);
     if (section) {
         const contents = await section.load(book.load.bind(book));
@@ -197,12 +202,21 @@ player.onloadedmetadata = () => {
 player.onended = () => {
     if (nextAudioUrl) {
         player.src = nextAudioUrl;
+        
+        // Update UI and Storage
         displayText.innerText = nextChapterData.text;
         localStorage.setItem("lastText", nextChapterData.text);
         localStorage.setItem("lastHref", nextChapterData.href);
+        
+        // CRITICAL: Reset time to 0 so it starts from the beginning
         localStorage.setItem("lastAudioTime", 0);
+        player.currentTime = 0; 
+        
         highlightAndScrollTo(nextChapterData.href);
+        
         player.play();
+        
+        // Clean up pre-load variables
         nextAudioUrl = null;
         isGeneratingNext = false;
     }
