@@ -4,7 +4,17 @@ const dbName = "EpubLibraryDB";
 const storeName = "books";
 const player = document.getElementById("player");
 
-// --- DB INITIALIZATION ---
+// NEW: Define these so loadChapter can find them
+const displayText = document.getElementById("textDisplay");
+const textContainer = document.getElementById("contentArea");
+
+// --- MOBILE DRAWER LOGIC ---
+function toggleMenu() {
+    document.getElementById('sidebar').classList.toggle('active');
+    document.getElementById('overlay').classList.toggle('active');
+}
+
+// --- DATABASE SETUP ---
 function initDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(dbName, 1);
@@ -19,7 +29,7 @@ function initDB() {
     });
 }
 
-// --- PROGRESS TRACKING ---
+// --- PROGRESS TRACKING (SECONDS) ---
 player.addEventListener('timeupdate', () => {
     const bookId = localStorage.getItem("currentBookId");
     const chapHref = localStorage.getItem(`lastChapterHref_${bookId}`);
@@ -46,15 +56,11 @@ async function saveBook(fileOrBlob, fileName) {
         });
 
         const title = meta.title || fileName;
-        const alreadyExists = existing.some(b => b.title === title && b.fileName === fileName);
-
-        if (!alreadyExists) {
+        if (!existing.some(b => b.title === title && b.fileName === fileName)) {
             store.add({ title, fileName, author: meta.creator || "Unknown", data: buffer });
         }
         tx.oncomplete = () => loadLibrary();
-    } catch (err) {
-        console.error("Error processing:", fileName, err);
-    }
+    } catch (err) { console.error("Save Error:", err); }
 }
 
 async function loadLibrary() {
@@ -72,19 +78,16 @@ async function loadLibrary() {
         books.forEach(b => {
             const card = document.createElement("div");
             card.className = "book-card";
-            card.innerHTML = `
-                <button class="delete-btn" onclick="deleteBook(event, ${b.id})">✕</button>
-                <span class="icon">📖</span>
-                <strong>${b.title}</strong>
-                <div style="font-size: 11px; color: #888;">${b.fileName}</div>
-            `;
+            card.innerHTML = `<button class="delete-btn" onclick="deleteBook(event, ${b.id})">✕</button>
+                              <span class="icon">📖</span><strong>${b.title}</strong>
+                              <div style="font-size:10px; color:#999; margin-top:5px;">${b.fileName}</div>`;
             card.onclick = () => openBook(b.id, b.data, b.title);
             grid.appendChild(card);
         });
 
-        const savedBookId = localStorage.getItem("currentBookId");
-        if (savedBookId) {
-            const lastBook = books.find(b => b.id == savedBookId);
+        const savedId = localStorage.getItem("currentBookId");
+        if (savedId) {
+            const lastBook = books.find(b => b.id == savedId);
             if (lastBook) openBook(lastBook.id, lastBook.data, lastBook.title);
         }
     };
@@ -104,106 +107,90 @@ async function syncFolderBooks() {
     for (const name of files) {
         try {
             const res = await fetch(`./${name}`);
-            if (res.ok) {
-                const blob = await res.blob();
-                await saveBook(blob, name);
-            }
-        } catch (e) { console.error("Sync error:", name, e); }
+            if (res.ok) await saveBook(await res.blob(), name);
+        } catch (e) { console.warn("Auto-sync failed for:", name); }
     }
 }
 
-// --- READER & PERSISTENCE ---
+// --- READER LOGIC ---
 async function openBook(id, data, title) {
     localStorage.setItem("currentBookId", id);
-    const lib = document.getElementById("libraryContainer");
-    const reader = document.getElementById("readerContainer");
-    
-    if (lib) lib.style.display = "none";
-    if (reader) reader.style.display = "flex";
+    document.getElementById("libraryContainer").style.display = "none";
+    document.getElementById("readerContainer").style.display = "flex";
     document.getElementById("bookTitleDisplay").innerText = title;
 
     currentBook = ePub(data);
     const nav = await currentBook.loaded.navigation;
-    
     chapters = (function flatten(toc) {
         return toc.reduce((acc, val) => acc.concat(val, val.subitems ? flatten(val.subitems) : []), []);
     })(nav.toc);
 
     const list = document.getElementById("chapterList");
-    if (!list) return;
     list.innerHTML = "";
     chapters.forEach((ch, index) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
-        div.innerHTML = `<span>${index + 1}</span> ${ch.label}`;
+        div.innerHTML = `<span>Chapter ${index + 1}</span>`; // Names removed
         div.dataset.href = ch.href;
-        div.onclick = () => loadChapter(ch.href, index + 1, true);
+        div.onclick = () => { 
+            loadChapter(ch.href, index + 1, true); 
+            if(window.innerWidth < 800) toggleMenu(); 
+        };
         list.appendChild(div);
     });
 
     const lastHref = localStorage.getItem(`lastChapterHref_${id}`);
     const lastNum = localStorage.getItem(`lastChapterNum_${id}`);
-    if (lastHref) {
-        loadChapter(lastHref, lastNum || 1, true);
-    }
+    loadChapter(lastHref || chapters[0].href, lastNum || 1, !!lastHref);
 }
 
 async function loadChapter(href, num, autoPlay = true) {
-    if (!currentBook) return;
-    const section = currentBook.spine.get(href);
+    if (!displayText) return;
+    displayText.innerText = "Loading text...";
+    if (textContainer) textContainer.scrollTop = 0;
     
+    const section = currentBook.spine.get(href);
     if (section) {
         const bookId = localStorage.getItem("currentBookId");
         localStorage.setItem(`lastChapterHref_${bookId}`, href);
         localStorage.setItem(`lastChapterNum_${bookId}`, num);
+        document.getElementById("chapterNumberDisplay").innerText = `Chapter ${num}`;
 
-        const chapDisp = document.getElementById("chapterNumberDisplay");
-        if (chapDisp) chapDisp.innerText = `| Chapter ${num}`;
-
-        try {
-            // Wait for the section to load the document content
-            const doc = await section.load(currentBook.load.bind(currentBook));
-            const textDisp = document.getElementById("textDisplay");
-            
-            if (textDisp && doc) {
-                // SAFETY CHECK: Ensure doc and doc.body exist
-                const bodyText = doc.body ? (doc.body.innerText || doc.body.textContent) : doc.textContent;
-                textDisp.innerText = (bodyText || "").trim();
+        const contents = await section.load(currentBook.load.bind(currentBook));
+        
+        // Use fallback if body is missing
+        const bodyNode = contents.querySelector("body") || contents;
+        let rawText = (bodyNode.innerText || bodyNode.textContent).trim();
+        
+        // CLEANUP: Remove double titles and "Chapter X" headers
+        let lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        while (lines.length > 1) {
+            const firstLine = lines[0].toLowerCase();
+            const secondLine = lines[1].toLowerCase();
+            if (firstLine === secondLine || firstLine.includes("chapter")) {
+                lines.shift(); 
+            } else {
+                break; 
             }
-            
-            // UI Updates
-            document.querySelectorAll(".chapter-item").forEach(i => i.classList.remove("active-chap"));
-            const active = Array.from(document.querySelectorAll(".chapter-item")).find(i => i.dataset.href === href);
-            if (active) {
-                active.classList.add("active-chap");
-                active.scrollIntoView({ behavior: "smooth", block: "center" });
-            }
-            
-            const contentArea = document.querySelector(".content-area");
-            if (contentArea) contentArea.scrollTop = 0;
-
-            // Unload to free memory
-            section.unload();
-
-            // Only trigger TTS if we successfully found text
-            if (autoPlay && textDisp && textDisp.innerText.length > 0) {
-                await generateTTS(href);
-            }
-        } catch (err) {
-            console.error("Error loading chapter content:", err);
         }
+
+        const cleanedText = lines.join('\n\n');
+        displayText.innerText = cleanedText;
+        
+        // Update Sidebar UI
+        document.querySelectorAll(".chapter-item").forEach(i => i.classList.remove("active-chap"));
+        const active = Array.from(document.querySelectorAll(".chapter-item")).find(i => i.dataset.href === href);
+        if (active) active.classList.add("active-chap");
+
+        section.unload();
+
+        if (autoPlay) await generateTTS(href);
     }
 }
 
 async function generateTTS(href) {
-    const display = document.getElementById("textDisplay");
     const btn = document.getElementById("genBtn");
-
-    // ERROR FIX: Check if elements exist before reading innerText
-    if (!display || !btn) return;
-
-    const text = display.innerText;
-    if (text.length < 10) return;
+    if (!displayText || !btn || displayText.innerText.length < 5) return;
     
     btn.disabled = true;
     btn.innerText = "Generating...";
@@ -212,26 +199,20 @@ async function generateTTS(href) {
         const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: text.substring(0, 5000) })
+            body: JSON.stringify({ text: displayText.innerText.substring(0, 5000) })
         });
-        
         const blob = await res.blob();
         const bookId = localStorage.getItem("currentBookId");
-        const activeHref = href || localStorage.getItem(`lastChapterHref_${bookId}`);
         
         player.src = URL.createObjectURL(blob);
-        player.playbackRate = parseFloat(document.getElementById("speedSelect")?.value || 1.0);
+        player.playbackRate = parseFloat(document.getElementById("speedSelect").value || 1.0);
         
-        const savedSecs = localStorage.getItem(`seconds_${bookId}_${activeHref}`);
-        if (savedSecs) player.currentTime = parseFloat(savedSecs);
-
-        player.play().catch(e => console.log("User must interact to play audio."));
-    } catch (e) { 
-        console.error("TTS Error:", e);
-    } finally {
-        btn.disabled = false;
-        btn.innerText = "Generate Audio";
-    }
+        const saved = localStorage.getItem(`seconds_${bookId}_${href}`);
+        if (saved) player.currentTime = parseFloat(saved);
+        
+        player.play().catch(() => console.log("User must tap to enable audio."));
+    } catch (e) { console.error("TTS Failed:", e); }
+    finally { btn.disabled = false; btn.innerText = "Read Aloud"; }
 }
 
 function closeBook() {
@@ -241,7 +222,26 @@ function closeBook() {
     player.pause();
 }
 
-// --- INIT ---
+// --- SEARCH LOGIC ---
+document.getElementById("chapSearch").addEventListener("input", (e) => {
+    const query = e.target.value.toLowerCase();
+    const items = Array.from(document.querySelectorAll(".chapter-item"));
+    items.forEach(i => { i.style.display = "flex"; i.style.opacity = "1"; i.style.background = "transparent"; });
+
+    if (query.length === 0) return;
+
+    const matchIndex = items.findIndex(item => item.innerText.toLowerCase().includes(query));
+    if (matchIndex !== -1) {
+        items.forEach((item, index) => {
+            if (index < matchIndex) item.style.display = "none";
+            else if (index === matchIndex) {
+                item.style.background = "#fff9c4"; 
+                item.scrollIntoView({ behavior: "smooth", block: "start" });
+            } else item.style.opacity = "0.7";
+        });
+    }
+});
+
 window.addEventListener("DOMContentLoaded", async () => {
     await loadLibrary();
     await syncFolderBooks();
@@ -249,11 +249,4 @@ window.addEventListener("DOMContentLoaded", async () => {
 
 document.getElementById("fileInput").addEventListener("change", e => {
     if (e.target.files[0]) saveBook(e.target.files[0], e.target.files[0].name);
-});
-
-document.getElementById("chapSearch")?.addEventListener("input", e => {
-    const q = e.target.value.toLowerCase();
-    document.querySelectorAll(".chapter-item").forEach(el => {
-        el.style.display = el.innerText.toLowerCase().includes(q) ? "flex" : "none";
-    });
 });
