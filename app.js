@@ -1,6 +1,6 @@
 let currentBook;
 let chapters = [];
-let currentChapHref = ""; // Track current location
+let currentChapHref = ""; 
 const dbName = "EpubLibraryDB";
 const storeName = "books";
 const player = document.getElementById("player");
@@ -101,7 +101,6 @@ async function openBook(id, data, title) {
     currentBook = ePub(data);
     const nav = await currentBook.loaded.navigation;
     
-    // Flatten TOC and capture actual labels
     chapters = (function flatten(toc) {
         return toc.reduce((acc, val) => {
             return acc.concat({ 
@@ -130,7 +129,8 @@ async function openBook(id, data, title) {
     const lastLabel = localStorage.getItem(`lastChapterNum_${id}`);
     const initialLabel = lastLabel || (chapters[0]?.label || "Chapter 1");
     
-    loadChapter(lastHref || chapters[0].href, initialLabel, !!lastHref);
+    // Pass false to autoPlay on first load to prevent unwanted audio blast
+    loadChapter(lastHref || chapters[0].href, initialLabel, false);
 }
 
 async function loadChapter(href, title, autoPlay = true) {
@@ -150,13 +150,16 @@ async function loadChapter(href, title, autoPlay = true) {
         const text = (contents.querySelector("body").innerText || contents.textContent).trim();
         displayText.innerText = text;
         
-        // Highlight active chapter
         document.querySelectorAll(".chapter-item").forEach(i => i.classList.remove("active-chap"));
         const active = Array.from(document.querySelectorAll(".chapter-item")).find(i => i.dataset.href === href);
         if (active) active.classList.add("active-chap");
 
         section.unload();
-        if (autoPlay) await generateTTS(href);
+
+        // If autoPlay is true (triggered by Next/Prev or clicking a chapter), generate and play
+        if (autoPlay) {
+            await generateTTS(href);
+        }
     }
 }
 
@@ -177,7 +180,7 @@ function prevChapter() {
     }
 }
 
-// --- TTS ---
+// --- TTS & AUTOPLAY LOGIC ---
 async function generateTTS(href) {
     const btn = document.getElementById("genBtn");
     if (!displayText || !btn || displayText.innerText.length < 5) return;
@@ -186,23 +189,50 @@ async function generateTTS(href) {
     btn.innerText = "Generating...";
 
     try {
+        const textToRead = displayText.innerText.substring(0, 5000); // Limit for API
         const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: displayText.innerText.substring(0, 5000) })
+            body: JSON.stringify({ text: textToRead })
         });
+
+        if (!res.ok) throw new Error("TTS API failed");
+
         const blob = await res.blob();
         const bookId = localStorage.getItem("currentBookId");
         
-        player.src = URL.createObjectURL(blob);
+        // Clean up previous blob to save memory
+        if (player.src) URL.revokeObjectURL(player.src);
+
+        const audioUrl = URL.createObjectURL(blob);
+        player.src = audioUrl;
+        
+        // Apply playback speed
         player.playbackRate = parseFloat(document.getElementById("speedSelect").value || 1.0);
         
+        // Check for saved timestamp
         const saved = localStorage.getItem(`seconds_${bookId}_${href}`);
         if (saved) player.currentTime = parseFloat(saved);
         
-        player.play().catch(() => console.log("User interaction required."));
-    } catch (e) { console.error("TTS Failed:", e); }
-    finally { btn.disabled = false; btn.innerText = "Read Aloud"; }
+        // AUTOPLAY: This will work because the function was triggered by a click (Next/Prev/Read Aloud)
+        const playPromise = player.play();
+
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                console.log("Autoplay started successfully");
+            }).catch(error => {
+                console.warn("Autoplay blocked: User needs to click play manually.", error);
+                btn.innerText = "Tap to Play";
+            });
+        }
+
+    } catch (e) { 
+        console.error("TTS Failed:", e); 
+        alert("Audio generation failed. Please check your API connection.");
+    } finally { 
+        btn.disabled = false; 
+        btn.innerText = "Read Aloud"; 
+    }
 }
 
 function closeBook() {
