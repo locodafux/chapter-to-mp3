@@ -130,7 +130,7 @@ async function openBook(id, data, title) {
     chapters.forEach((ch, index) => {
         const div = document.createElement("div");
         div.className = "chapter-item";
-        div.innerHTML = `<span>Chapter ${index + 1}</span>`; // Names removed
+        div.innerHTML = `<span>Chapter ${index + 1}</span>`;
         div.dataset.href = ch.href;
         div.onclick = () => { 
             loadChapter(ch.href, index + 1, true); 
@@ -158,11 +158,9 @@ async function loadChapter(href, num, autoPlay = true) {
 
         const contents = await section.load(currentBook.load.bind(currentBook));
         
-        // Use fallback if body is missing
         const bodyNode = contents.querySelector("body") || contents;
         let rawText = (bodyNode.innerText || bodyNode.textContent).trim();
         
-        // CLEANUP: Remove double titles and "Chapter X" headers
         let lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         while (lines.length > 1) {
             const firstLine = lines[0].toLowerCase();
@@ -177,7 +175,6 @@ async function loadChapter(href, num, autoPlay = true) {
         const cleanedText = lines.join('\n\n');
         displayText.innerText = cleanedText;
         
-        // Update Sidebar UI
         document.querySelectorAll(".chapter-item").forEach(i => i.classList.remove("active-chap"));
         const active = Array.from(document.querySelectorAll(".chapter-item")).find(i => i.dataset.href === href);
         if (active) active.classList.add("active-chap");
@@ -221,6 +218,11 @@ function closeBook() {
     document.getElementById("readerContainer").style.display = "none";
     player.pause();
 }
+
+// --- SPEED CONTROL FIX ---
+document.getElementById("speedSelect").addEventListener("change", (e) => {
+    player.playbackRate = parseFloat(e.target.value);
+});
 
 // --- SEARCH LOGIC ---
 document.getElementById("chapSearch").addEventListener("input", (e) => {
