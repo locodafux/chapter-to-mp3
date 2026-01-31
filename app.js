@@ -4,7 +4,7 @@ let isGeneratingNext = false;
 let nextAudioUrl = null;
 let nextChapterData = null;
 
-const DEFAULT_BOOK_PATH = "/book-2.epub"; 
+const DEFAULT_BOOK_PATH = "/mvs-1401-2100.epub"; 
 
 const chapterListDiv = document.getElementById("chapterList");
 const chapterSearch = document.getElementById("chapterSearch");
