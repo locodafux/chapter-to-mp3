@@ -280,3 +280,13 @@ function renderChapters(chapters) {
         chapterListDiv.appendChild(div);
     });
 }
+
+copyTextToClipboard = () => {
+    const text = displayText.innerText;
+    if (!text || text.startsWith("Loading") || text.startsWith("Select")) return;
+    
+    navigator.clipboard.writeText(text).then(() => {
+    }).catch(err => {
+        console.log("Failed to copy text.");
+    });
+}
